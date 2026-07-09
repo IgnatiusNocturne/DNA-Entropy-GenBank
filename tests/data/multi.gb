@@ -1,0 +1,30 @@
+LOCUS       geneious|urn:local:.:x:0  58 bp    DNA              UNK 01-JAN-1980
+DEFINITION  multi test geneious|urn:local:.:x:0.
+ACCESSION   geneious|urn:local:.:x:0
+VERSION     geneious|urn:local:.:x:0
+KEYWORDS    .
+SOURCE      .
+  ORGANISM  .
+            .
+FEATURES             Location/Qualifiers
+     gene            1..30
+                     /gene="gA"
+     gene            complement(34..57)
+                     /gene="gB"
+ORIGIN
+        1 atgcgtacgt tagcactgac cggtattccg aaactggcgt aaacgtacgt acgtacgt
+//
+LOCUS       geneious|urn:local:.:x:1  57 bp    DNA              UNK 01-JAN-1980
+DEFINITION  multi test geneious|urn:local:.:x:1.
+ACCESSION   geneious|urn:local:.:x:1
+VERSION     geneious|urn:local:.:x:1
+KEYWORDS    .
+SOURCE      .
+  ORGANISM  .
+            .
+FEATURES             Location/Qualifiers
+     gene            10..45
+                     /gene="gC"
+ORIGIN
+        1 tttaaacccg ggatgaaacg ttttggcacc taaggcctta aggccttaag gcctaaa
+//

@@ -1,0 +1,23 @@
+LOCUS       toy_locus                126 bp    DNA              UNK 01-JAN-1980
+DEFINITION  Toy locus for DNA-Entropy GenBank tests.
+ACCESSION   toy_locus
+VERSION     toy_locus
+KEYWORDS    .
+SOURCE      .
+  ORGANISM  .
+            .
+FEATURES             Location/Qualifiers
+     gene            1..42
+                     /gene="geneA"
+                     /locus_tag="TOY_0001"
+     gene            complement(85..126)
+                     /gene="geneB"
+                     /locus_tag="TOY_0002"
+     CDS             1..42
+                     /gene="geneA"
+                     /product="hypothetical protein"
+ORIGIN
+        1 atgcgtacgt tagcactgac cggtattccg aaactggcgt aaccggttaa ccggttaacc
+       61 ggttaaccgg ttaaccggtt aaccatgaaa cgttttggca cctaaggcct taaggcctta
+      121 aggcct
+//

@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dna-entropy"
+version = "0.0.1"
+description = "Per-position information entropy of DNA via the Evo 2 genomic language model, exported for IGV."
+readme = "README.md"
+requires-python = ">=3.10"
+# Core deps stay light so the mock-predictor pipeline installs and runs with no GPU.
+# Biopython is pure-Python (+ numpy, already a dep) and powers GenBank/FASTA I/O, which
+# is now core functionality — not a heavy GPU extra.
+dependencies = [
+    "numpy>=1.24",
+    "typer>=0.9",
+    "biopython>=1.81",
+]
+
+[project.optional-dependencies]
+# Dev: laptop / CI, no GPU needed.
+dev = ["pytest>=7"]
+# Evo: GPU box only (see docs/EVO_SETUP.md). Heavy; never a core dep.
+evo = ["torch", "evo2"]
+# Gene boundaries (optional, prokaryotic).
+genes = ["pyrodigal>=3"]
+# Building the double-click Windows .exe (see packaging/build_exe.ps1).
+package = ["pyinstaller>=6"]
+
+[project.scripts]
+dna-entropy = "dna_entropy.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# GPU/Evo tests are marked and skip themselves when no CUDA stack is present.
+# Plain `pytest` runs everything; on the laptop use `pytest -m "not gpu"`.
+markers = [
+    "gpu: requires a CUDA GPU and the Evo stack (skipped without one)",
+]

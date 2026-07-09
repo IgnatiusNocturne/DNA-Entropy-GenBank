@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Project outputs / data
+out/
+*.bedgraph
+*.wig
+*.gff3
+
+# Models / weights / secrets — never commit
+*.pt
+*.safetensors
+.env
+*.key
+*.pem
+*.ppk
+
+# Packaging build output (the shipped .exe lives in the repo root; dist/ is transient)
+build/
+dist/
+evo_results/
+runs/
+
+# local planning scratch
+temp.md
