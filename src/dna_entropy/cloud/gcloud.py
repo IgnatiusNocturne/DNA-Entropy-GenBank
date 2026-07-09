@@ -198,18 +198,195 @@ def delete_vm(
 
 
 def classify_create_error(stderr: str) -> str:
-    """Bucket a create failure: quota|stockout|already_exists|permission|other."""
+    """Bucket a create failure.
+
+    Returns one of: ``billing`` | ``api_disabled`` | ``quota`` | ``stockout`` |
+    ``already_exists`` | ``permission`` | ``network`` | ``other``.
+
+    The ``billing`` and ``api_disabled`` buckets matter a lot: they are *project-wide*
+    setup problems (not zone-specific), and GCP reports them on the very first create.
+    Without singling them out they read as generic "no capacity", which is exactly the
+    misleading picture a mis-set-up project produces — creates fail in every zone for a
+    reason that has nothing to do with capacity.
+    """
     s = stderr.lower()
+    # Billing must be checked before quota: some billing errors also mention "account".
+    if "billing" in s and ("enable" in s or "disabled" in s or "not found" in s
+                            or "not active" in s or "account" in s):
+        return "billing"
+    if (
+        "has not been used in project" in s
+        or "accessnotconfigured" in s
+        or "serviceusage" in s
+        or ("compute" in s and "api" in s and ("disabled" in s or "not enabled" in s))
+        or "it is disabled" in s
+    ):
+        return "api_disabled"
     if "quota" in s:
         return "quota"
     if (
         "stockout" in s
         or "zone_resource_pool_exhausted" in s
         or "does not have enough resources" in s
+        or "resource_availability" in s
     ):
         return "stockout"
     if "already exists" in s or "resource already exists" in s:
         return "already_exists"
-    if "permission" in s or "forbidden" in s or "not authorized" in s:
+    if "permission" in s or "forbidden" in s or "not authorized" in s or "iam" in s:
         return "permission"
+    if (
+        "could not reach" in s
+        or "connection" in s
+        or "network is unreachable" in s
+        or "timed out" in s
+        or "timeout" in s
+    ):
+        return "network"
     return "other"
+
+
+# --- project / billing / API setup checks -------------------------------------------
+
+def project_state(project: str, *, timeout: float = 30) -> Optional[str]:
+    """Return the project's lifecycle state (``ACTIVE`` etc.), or None if unreadable.
+
+    None means the project could not be described at all — wrong ID, no access, or a
+    gcloud/network failure. A reachable project with no state field reported comes back
+    as an empty string (treated as "reachable, state unknown" by callers).
+    """
+    proc = _run(
+        ["projects", "describe", project, "--format=value(lifecycleState)"],
+        timeout=timeout, check=False,
+    )
+    if proc.returncode != 0:
+        return None
+    return proc.stdout.strip()
+
+
+def billing_enabled(project: str, *, timeout: float = 30) -> tuple[Optional[bool], str]:
+    """Return ``(enabled, detail)`` for the project's billing.
+
+    ``enabled`` is True/False when we can tell, or None if the check itself failed
+    (Billing API off, missing permission, network). ``detail`` carries the exact gcloud
+    output/error so callers can show precisely what went wrong. A project with no billing
+    account **cannot create any VM**, which is a common cause of "nothing ever provisions".
+    """
+    proc = _run(
+        ["billing", "projects", "describe", project,
+         "--format=value(billingEnabled)"],
+        timeout=timeout, check=False,
+    )
+    if proc.returncode != 0:
+        return None, (proc.stderr or proc.stdout).strip()
+    val = proc.stdout.strip().lower()
+    if val in ("true", "false"):
+        return (val == "true"), proc.stdout.strip()
+    return None, proc.stdout.strip()
+
+
+def api_enabled(service: str, project: str, *, timeout: float = 30) -> tuple[Optional[bool], str]:
+    """Return ``(enabled, detail)`` for whether ``service`` (e.g. ``compute.googleapis.com``)
+    is enabled on the project. None if the check itself failed."""
+    proc = _run(
+        ["services", "list", "--enabled",
+         f"--filter=config.name:{service}",
+         "--format=value(config.name)",
+         f"--project={project}"],
+        timeout=timeout, check=False,
+    )
+    if proc.returncode != 0:
+        return None, (proc.stderr or proc.stdout).strip()
+    return (service in proc.stdout), proc.stdout.strip()
+
+
+def enable_api(service: str, project: str, *, timeout: float = 300) -> tuple[bool, str]:
+    """Enable ``service`` on the project. Returns ``(ok, detail)``; ``detail`` is the exact
+    gcloud error when it fails.
+
+    ``gcloud services enable`` is idempotent (enabling an already-enabled API succeeds), so
+    this is safe to call whenever a check reports the API off. It can take ~30-60s to take
+    effect. Failure is usually a missing ``serviceusage.services.enable`` permission or
+    billing not being linked yet — both surfaced in ``detail``.
+    """
+    proc = _run(
+        ["services", "enable", service, f"--project={project}"],
+        timeout=timeout, check=False,
+    )
+    if proc.returncode != 0:
+        return False, (proc.stderr or proc.stdout).strip()
+    return True, proc.stdout.strip()
+
+
+# --- quota / GPU health checks ------------------------------------------------------
+
+def gpu_quota_metric(accelerator: str) -> str:
+    """Map a GPU accelerator type to its Compute Engine quota metric name.
+
+    e.g. ``nvidia-l4`` -> ``NVIDIA_L4_GPUS``. Unknown types fall back to the
+    all-regions GPU metric so callers still get a usable filter.
+    """
+    a = accelerator.lower()
+    if "l4" in a:
+        return "NVIDIA_L4_GPUS"
+    if "a100" in a:
+        return "NVIDIA_A100_GPUS"
+    if "t4" in a:
+        return "NVIDIA_T4_GPUS"
+    if "v100" in a:
+        return "NVIDIA_V100_GPUS"
+    return "GPUS_ALL_REGIONS"
+
+
+def list_region_gpu_quota(
+    metrics: Sequence[str],
+    project: Optional[str] = None,
+    *,
+    timeout: float = 60,
+) -> Optional[dict[str, dict[str, float]]]:
+    """Return per-region available GPU quota for the requested quota metrics.
+
+    Result is ``{region: {metric: available}}`` where ``available = limit - usage``
+    (clamped at 0), including only regions/metrics whose limit is positive. This is a
+    single ``regions list`` call, so it is cheap relative to probing every zone.
+
+    Returns ``None`` if the quota query itself fails (gcloud missing, auth, API
+    disabled, network) so callers can tell *"unknown"* apart from *"genuinely zero
+    quota everywhere"* (an empty dict).
+    """
+    if not metrics:
+        return {}
+    metric_set = {m.upper() for m in metrics}
+    filt = " OR ".join(f"quotas.metric={m}" for m in sorted(metric_set))
+    args = [
+        "compute", "regions", "list",
+        "--flatten=quotas[]",
+        f"--filter={filt}",
+        "--format=csv[no-heading](name,quotas.metric,quotas.limit,quotas.usage)",
+    ]
+    if project:
+        args.append(f"--project={project}")
+    try:
+        proc = _run(args, timeout=timeout, check=False)
+    except (GcloudError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0:
+        return None
+    result: dict[str, dict[str, float]] = {}
+    for line in proc.stdout.strip().splitlines():
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) < 4:
+            continue
+        region, metric, limit_s, usage_s = parts[0], parts[1].upper(), parts[2], parts[3]
+        if metric not in metric_set:
+            continue
+        try:
+            limit = float(limit_s)
+            usage = float(usage_s)
+        except ValueError:
+            continue
+        if limit <= 0:
+            continue
+        avail = limit - usage
+        result.setdefault(region, {})[metric] = avail if avail > 0 else 0.0
+    return result

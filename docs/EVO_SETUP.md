@@ -136,6 +136,28 @@ and load them into IGV (see [DESIGN.md §7](DESIGN.md#7-igv-output)).
 - **`transformer-engine` build fails:** skip it; it's not needed for 7B bf16.
 - **OOM:** lower `--max-len` (the single-pass context cap) or use a bigger-VRAM instance.
 - **flash-attn version mismatch:** pin to the version the current evo2 README specifies.
+- **Keeper "no quota" vs "no capacity":** before probing zones, the keeper reads your
+  project's GPU quota per region (one `regions list` call) and only chases zones in regions
+  that actually have quota — so `no <GPU> quota in this region` spam disappears and the
+  remaining `no capacity` messages are genuine, transient stockouts (retry succeeds). If
+  **no region has any GPU quota**, that is the fixable case: the keeper prints the one-time
+  quota-request steps (IAM & Admin -> Quotas, request `NVIDIA_L4_GPUS` >= 1 in your region)
+  and keeps retrying so it picks up automatically once the grant lands. It also runs
+  `nvidia-smi` on a freshly-acquired box, so a VM that is SSH-reachable but has no live GPU
+  is caught and re-checked instead of being treated as ready.
+- **Keeper setup health check ("nothing ever provisions"):** on startup the keeper prints a
+  `GCP setup health check` block that verifies, with the **exact gcloud error** and the one
+  command that fixes each, that: the project is reachable/ACTIVE, **billing is enabled**
+  (a project with no billing account cannot create *any* VM — the classic "creates are
+  attempted but nothing appears" symptom), the **Compute Engine API is enabled**, and GPU
+  quota exists. If the **Compute Engine API is off**, the keeper **enables it automatically**
+  (`gcloud services enable compute.googleapis.com`, ~30-60s; safe and idempotent) and only
+  reports an error if that fails (e.g. the account lacks `serviceusage.services.enable`),
+  printing the exact gcloud text and the manual command. Billing-off and API-off are
+  project-wide, so during acquisition the keeper stops on the first zone and prints the
+  remediation verbatim instead of mislabelling them as "no capacity" across every zone. If a
+  check can't be run (e.g. the Cloud Billing API itself is off) it prints `WARN:` and
+  continues rather than blocking.
 - **Keep `EvoPredictor` the only Evo-aware module** — see [CLAUDE.md](../CLAUDE.md) hard
   rule #1. This file documents the *environment*; the code lives in
   `src/dna_entropy/predictors/evo.py`.

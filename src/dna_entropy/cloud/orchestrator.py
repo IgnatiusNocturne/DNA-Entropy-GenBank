@@ -191,6 +191,57 @@ def _ordered_zones(cfg: CloudConfig, state: dict) -> list[str]:
     return zones
 
 
+# Create failures that are project-wide setup problems, not zone-specific. Retrying other
+# zones is pointless — every zone fails identically — so we surface these immediately with
+# the exact gcloud text plus how to fix it.
+_SETUP_ERROR_KINDS = ("billing", "api_disabled", "permission")
+
+
+def _setup_remediation(kind: str, raw: str) -> str:
+    """Human-fixable remediation text for a project-wide setup error, incl. the raw error."""
+    if kind == "billing":
+        return (
+            "Billing is not enabled on this project - GCP will not create ANY VM without it.\n"
+            f"  gcloud said: {raw}\n"
+            "  Fix: link a billing account at https://console.cloud.google.com/billing\n"
+            "       or: gcloud billing projects link PROJECT_ID "
+            "--billing-account=XXXXXX-XXXXXX-XXXXXX"
+        )
+    if kind == "api_disabled":
+        return (
+            "The Compute Engine API is not enabled on this project.\n"
+            f"  gcloud said: {raw}\n"
+            "  Fix: gcloud services enable compute.googleapis.com\n"
+            "       (or enable it at "
+            "https://console.cloud.google.com/apis/library/compute.googleapis.com )"
+        )
+    return (
+        "Your account is not allowed to create VMs in this project.\n"
+        f"  gcloud said: {raw}\n"
+        "  Fix: have the project owner grant your account 'Compute Admin' "
+        "(roles/compute.admin),\n"
+        "       or switch to an account that has it (gcloud auth login)."
+    )
+
+
+def _raise_if_setup(errors: dict[str, str]) -> None:
+    """Raise a remediation error if any project-wide setup failure has been seen."""
+    for kind in _SETUP_ERROR_KINDS:
+        if kind in errors:
+            raise gcloud.GcloudError(_setup_remediation(kind, errors[kind]))
+
+
+def _format_errors(errors: dict[str, str]) -> str:
+    """One exact-gcloud-error example per failure kind, for the final give-up message."""
+    if not errors:
+        return ""
+    lines = ["  Exact errors gcloud returned (one example per kind):"]
+    for kind, raw in errors.items():
+        first = next((ln for ln in raw.strip().splitlines() if ln.strip()), raw)
+        lines.append(f"    [{kind}] {first.strip()}")
+    return "\n".join(lines) + "\n"
+
+
 def _attempt_create(zone: str, machine: str, accel: str, project: str, cfg: CloudConfig) -> None:
     """Create BOX_NAME in one zone; raises GcloudError on failure."""
     gcloud.create_vm(
@@ -202,11 +253,13 @@ def _attempt_create(zone: str, machine: str, accel: str, project: str, cfg: Clou
 
 
 def _try_sequential(zones: list[str], machine: str, accel: str, label: str,
-                    project: str, cfg: CloudConfig) -> tuple[Optional[str], bool, bool]:
+                    project: str, cfg: CloudConfig,
+                    errors: dict[str, str]) -> tuple[Optional[str], bool, bool]:
     """Try zones one at a time.
 
-    Returns (winning_zone, had_quota_error, was_pre_existing).
-    Never raises on quota/stockout/already_exists — only on permission errors.
+    Returns (winning_zone, had_quota_error, was_pre_existing). Records one exact error
+    per kind into ``errors``. Raises immediately (with remediation) on a project-wide
+    setup problem — billing/API/permission — since retrying other zones cannot help.
     """
     had_quota = False
     for zone in zones:
@@ -215,9 +268,11 @@ def _try_sequential(zones: list[str], machine: str, accel: str, label: str,
                 _attempt_create(zone, machine, accel, project, cfg)
             return zone, had_quota, False
         except gcloud.GcloudError as exc:
-            kind = gcloud.classify_create_error(str(exc))
-            if kind == "permission":
-                raise
+            raw = str(exc)
+            kind = gcloud.classify_create_error(raw)
+            errors[kind] = raw
+            if kind in _SETUP_ERROR_KINDS:
+                raise gcloud.GcloudError(_setup_remediation(kind, raw))
             if kind == "already_exists":
                 typer.secho(f"      {zone}: box already exists here - reusing it", fg=typer.colors.CYAN)
                 return zone, had_quota, True
@@ -230,10 +285,13 @@ def _try_sequential(zones: list[str], machine: str, accel: str, label: str,
 
 
 def _try_parallel(zones: list[str], machine: str, accel: str, label: str,
-                  project: str, cfg: CloudConfig) -> tuple[Optional[str], bool, bool]:
+                  project: str, cfg: CloudConfig,
+                  errors: dict[str, str]) -> tuple[Optional[str], bool, bool]:
     """Try zones simultaneously; return (first_winner, had_quota_error, was_pre_existing).
 
-    Cleans up any extra VMs that also succeeded. Never raises on quota/stockout.
+    Cleans up any extra VMs that also succeeded. Records one exact error per kind into
+    ``errors``. Does not raise on setup errors itself (workers can't raise cleanly) — the
+    caller inspects ``errors`` via :func:`_raise_if_setup` after the batch.
     """
     typer.echo(f"  Trying {len(zones)} zones in parallel: {', '.join(zones)}")
 
@@ -251,9 +309,11 @@ def _try_parallel(zones: list[str], machine: str, accel: str, label: str,
                     return ("ok", zone, False)
                 return ("extra", zone, False)
         except gcloud.GcloudError as exc:
-            kind = gcloud.classify_create_error(str(exc))
-            if kind == "quota":
-                with lock:
+            raw = str(exc)
+            kind = gcloud.classify_create_error(raw)
+            with lock:
+                errors[kind] = raw
+                if kind == "quota":
                     had_quota[0] = True
             if kind == "already_exists":
                 with lock:
@@ -296,6 +356,7 @@ def _create_box(project: str, state: dict, cfg: CloudConfig) -> tuple[str, bool]
     Quota errors in individual regions do NOT abort — we keep trying other regions.
     Only escalates to A100 after all L4 zones are exhausted.
     """
+    errors: dict[str, str] = {}  # one exact gcloud error per kind, for diagnostics
     for machine, accel, label in cfg.offers:
         zones = _ordered_zones(cfg, state)
         any_quota = False
@@ -307,7 +368,7 @@ def _create_box(project: str, state: dict, cfg: CloudConfig) -> tuple[str, bool]
 
         # Phase 1: first 3 sequential (fast feedback, common case)
         seq, zones = zones[:3], zones[3:]
-        won, q, existing = _try_sequential(seq, machine, accel, label, project, cfg)
+        won, q, existing = _try_sequential(seq, machine, accel, label, project, cfg, errors)
         any_quota = any_quota or q
         if won:
             return _win(won, not existing)
@@ -316,26 +377,29 @@ def _create_box(project: str, state: dict, cfg: CloudConfig) -> tuple[str, bool]
         if zones:
             batch, zones = zones[:3], zones[3:]
             typer.secho("  Sequential attempts exhausted; switching to parallel...", fg=typer.colors.YELLOW)
-            won, q, existing = _try_parallel(batch, machine, accel, label, project, cfg)
+            won, q, existing = _try_parallel(batch, machine, accel, label, project, cfg, errors)
             any_quota = any_quota or q
             if won:
                 return _win(won, not existing)
+        _raise_if_setup(errors)
 
         # Phase 3: next 5 parallel
         if zones:
             batch, zones = zones[:5], zones[5:]
-            won, q, existing = _try_parallel(batch, machine, accel, label, project, cfg)
+            won, q, existing = _try_parallel(batch, machine, accel, label, project, cfg, errors)
             any_quota = any_quota or q
             if won:
                 return _win(won, not existing)
+        _raise_if_setup(errors)
 
         # Phase 4+: batches of 7 until all zones are tried
         while zones:
             batch, zones = zones[:7], zones[7:]
-            won, q, existing = _try_parallel(batch, machine, accel, label, project, cfg)
+            won, q, existing = _try_parallel(batch, machine, accel, label, project, cfg, errors)
             any_quota = any_quota or q
             if won:
                 return _win(won, not existing)
+        _raise_if_setup(errors)
 
         if any_quota:
             typer.secho(
@@ -347,7 +411,8 @@ def _create_box(project: str, state: dict, cfg: CloudConfig) -> tuple[str, bool]
 
     raise gcloud.GcloudError(
         "No GPU capacity found in any zone right now.\n"
-        "  - For L4: stockout is common; try again in a few minutes.\n"
+        + _format_errors(errors)
+        + "  - For L4: stockout is common; try again in a few minutes.\n"
         f"  - If you saw quota warnings above:\n{_quota_msg('L4', 'nvidia-l4')}"
     )
 
