@@ -42,7 +42,7 @@ The output set depends on what you feed in:
 
 | Input | What we do | Files produced |
 |-------|-----------|----------------|
-| **GenBank** (`.gb`/`.gbk`) | Use the genes **already in the file** (never re-annotated); compute entropy. **Multi-record files are fully supported** — every record is analyzed | `<name>.gb` (all records, genes + per-gene `/note="mean_entropy=..."`), `<name>.entropy.wig` (one block per record), `<name>.entropy.geneious.gff3` (per-position track for Geneious), `stats.txt` |
+| **GenBank** (`.gb`/`.gbk`) | Use the genes **already in the file** (never re-annotated); compute entropy. **Multi-record files are fully supported** — every record is analyzed | `<name>.gb` (all records, genes + per-gene `/note="mean_entropy=..."`), `<name>.fasta` (all records, for loading as an IGV genome), `<name>.entropy.bedgraph` + `<name>.entropy.wig` (one block per record), `<name>.entropy.geneious.gff3` (per-position track for Geneious), `stats.txt`. Sequence and genes come straight from the GenBank records — Prodigal is never run |
 | **FASTA** (`.fa`/`.fasta`) or **pasted sequence** | Compute entropy; call genes with Prodigal when possible | `<name>.fasta`, `<name>.entropy.bedgraph`, `<name>.entropy.geneious.gff3`, `<name>.summary.txt`, `<name>.genes.gff3` *(with `--genes`)*, plus a bonus `<name>.gb` |
 
 Why several entropy-track formats? A GenBank file has **no channel for a per-base numeric
@@ -167,10 +167,14 @@ The real Evo predictor (`--predictor evo`) needs an NVIDIA GPU with ~24 GB VRAM 
 
 ## Viewing the results
 
-**In IGV** (full per-base graph):
-1. *Genomes → Load Genome from File…* → `<name>.fasta` (or load the `.gb`).
-2. *File → Load from File…* → `<name>.entropy.bedgraph` / `.wig` (and `.genes.gff3`).
-3. The entropy track renders as a graph aligned to the locus.
+**In IGV** (full per-base bar graph):
+1. Load the genome from the **`<name>.fasta`** — *desktop:* Genomes → Load Genome from
+   File…; *web ([igv.org/app](https://igv.org/app)):* Genome menu → Local File…. **Use the
+   FASTA, not the `.gb`** — IGV-web can't build a genome from GenBank and errors with
+   *"Cannot read properties of undefined (reading 'startsWith')"*.
+2. Load the track — *desktop:* File → Load from File…; *web:* Tracks → Local File… →
+   `<name>.entropy.bedgraph` / `.wig` (and `.genes.gff3` if present).
+3. The entropy renders as a bar graph aligned to the locus.
 
 **In Geneious Prime** (full per-base entropy track):
 1. Import the sequence: *File → Import → From File…* → `<name>.gb` (or `<name>.fasta`).

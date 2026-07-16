@@ -99,14 +99,26 @@ def _try_annotate(seq: str) -> list[GeneFeature]:
 
 
 def _write_genbank_outputs(cfg: RunConfig, processed: list[tuple]) -> list[str]:
-    """GenBank input -> ONE GenBank (all records, genes preserved + entropy notes) + ONE
-    WIG track (a block per record) + ONE stats.txt (per-record + overall).
+    """GenBank input -> ONE GenBank (all records, genes preserved + entropy notes), a
+    FASTA + bedGraph + WIG + Geneious track (a block per record), and ONE stats.txt.
 
-    ``processed`` is a list of ``(Contig, values)``.
+    Everything is sourced straight from the GenBank records (sequence and existing genes);
+    Prodigal is never run on this path. ``processed`` is a list of ``(Contig, values)``.
     """
     gb = GenBankWriter().write_multi(
         name=cfg.name,
         records=[(c.name, c.seq, c.features, values, c.source_id) for c, values in processed],
+        out_dir=cfg.out_dir,
+    )
+    fasta = FastaWriter().write_multi(
+        name=cfg.name,
+        blocks=[(c.name, c.seq) for c, _ in processed],
+        out_dir=cfg.out_dir,
+    )
+    bedgraph = BedGraphWriter().write_multi(
+        name=cfg.name,
+        blocks=[(c.name, values) for c, values in processed],
+        start=cfg.start,
         out_dir=cfg.out_dir,
     )
     wig = WigWriter().write_multi(
@@ -128,7 +140,7 @@ def _write_genbank_outputs(cfg: RunConfig, processed: list[tuple]) -> list[str]:
         out_dir=cfg.out_dir,
         filename="stats.txt",
     )
-    return [gb, wig, geneious, stats]
+    return [gb, fasta, bedgraph, wig, geneious, stats]
 
 
 def _write_standard_outputs(

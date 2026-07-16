@@ -123,10 +123,16 @@ def test_pipeline_genbank_input(tmp_path: Path) -> None:
     cfg = RunConfig(name="tl", input_path=SAMPLE_GB, out_dir=str(tmp_path))
     result = pipeline.run(cfg)
     names = {Path(p).name for p in result.outputs}
-    assert names == {"tl.gb", "tl.entropy.wig", "tl.entropy.geneious.gff3", "stats.txt"}
-    # No FASTA / bedGraph, and no genes GFF, on the GenBank path (the only .gff3 is the
-    # Geneious entropy track).
-    assert not any(n.endswith((".fasta", ".bedgraph")) for n in names)
+    assert names == {
+        "tl.gb",
+        "tl.fasta",
+        "tl.entropy.bedgraph",
+        "tl.entropy.wig",
+        "tl.entropy.geneious.gff3",
+        "stats.txt",
+    }
+    # Prodigal never runs on the GenBank path, so there is no genes GFF (the only .gff3 is
+    # the Geneious entropy track); the FASTA/bedGraph come from the record, not Prodigal.
     assert not any(n.endswith(".genes.gff3") for n in names)
     assert len(result.genes) == 2  # preserved from the input, not re-called
 
@@ -171,7 +177,14 @@ def test_pipeline_multi_record_genbank(tmp_path: Path) -> None:
     cfg = RunConfig(name="mt", input_path=MULTI_GB, out_dir=str(tmp_path))
     result = pipeline.run(cfg)
     names = {Path(p).name for p in result.outputs}
-    assert names == {"mt.gb", "mt.entropy.wig", "mt.entropy.geneious.gff3", "stats.txt"}
+    assert names == {
+        "mt.gb",
+        "mt.fasta",
+        "mt.entropy.bedgraph",
+        "mt.entropy.wig",
+        "mt.entropy.geneious.gff3",
+        "stats.txt",
+    }
     assert result.contigs == 2
     assert len(result.genes) == 3  # 2 + 1 genes preserved across both records
 
@@ -185,6 +198,15 @@ def test_pipeline_multi_record_genbank(tmp_path: Path) -> None:
     wig_text = Path(next(p for p in result.outputs if p.endswith(".wig"))).read_text()
     assert wig_text.count("fixedStep") == 2
     assert "chrom=mt_1" in wig_text and "chrom=mt_2" in wig_text
+
+    # The FASTA (for loading as an IGV genome) holds both contigs, named to match the track.
+    fasta_text = Path(next(p for p in result.outputs if p.endswith(".fasta"))).read_text()
+    assert ">mt_1" in fasta_text and ">mt_2" in fasta_text
+
+    # The bedGraph carries one row set per contig, keyed by the same chrom names.
+    bg_text = Path(next(p for p in result.outputs if p.endswith(".bedgraph"))).read_text()
+    assert bg_text.count("track type=bedGraph") == 1  # single header covers both records
+    assert "mt_1\t" in bg_text and "mt_2\t" in bg_text
 
     # stats.txt reports each record.
     stats = Path(next(p for p in result.outputs if p.endswith("stats.txt"))).read_text()
