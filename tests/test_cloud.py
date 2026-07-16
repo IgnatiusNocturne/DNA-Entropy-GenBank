@@ -191,6 +191,41 @@ def test_create_box_final_message_includes_exact_errors(monkeypatch: pytest.Monk
     assert "ZONE_RESOURCE_POOL_EXHAUSTED" in msg
 
 
+def test_create_box_records_and_filters_quota_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    attempted_zones = []
+
+    def _attempt(zone, machine, accel, project, cfg):
+        attempted_zones.append(zone)
+        if zone == "us-central1-a":
+            raise gcloud.GcloudError("Quota 'NVIDIA_L4_GPUS' exceeded. Limit: 0.0")
+        else:
+            raise gcloud.GcloudError("ZONE_RESOURCE_POOL_EXHAUSTED: does not have enough resources")
+
+    monkeypatch.setattr(orchestrator, "_attempt_create", _attempt)
+    cfg = CloudConfig(
+        zones=["us-central1-a", "us-central1-b", "us-east1-a"],
+        offers=[("g2-standard-8", "nvidia-l4", "L4")]
+    )
+
+    no_quota = set()
+    with pytest.raises(gcloud.GcloudError):
+        orchestrator._create_box("proj", {}, cfg, no_quota=no_quota)
+
+    assert ("us-central1", "L4") in no_quota
+    assert "us-central1-a" in attempted_zones
+    assert "us-central1-b" in attempted_zones
+    assert "us-east1-a" in attempted_zones
+
+    attempted_zones.clear()
+
+    with pytest.raises(gcloud.GcloudError):
+        orchestrator._create_box("proj", {}, cfg, no_quota=no_quota)
+
+    assert "us-east1-a" in attempted_zones
+    assert "us-central1-a" not in attempted_zones
+    assert "us-central1-b" not in attempted_zones
+
+
 # --- spinner ------------------------------------------------------------------------
 
 def test_spinner_non_tty_writes_start_and_end() -> None:

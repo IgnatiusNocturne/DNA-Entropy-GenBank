@@ -296,6 +296,8 @@ def keep_alive(
     ready = False  # Evo stack confirmed installed on the current box
     cycles = 0
     all_zones = list(cfg.zones)  # full zone list; quota check narrows cfg.zones per attempt
+    no_quota: set[tuple[str, str]] = set()
+    first_run_done = False
 
     while max_cycles is None or cycles < max_cycles:
         cycles += 1
@@ -303,8 +305,10 @@ def keep_alive(
             existing = gcloud.find_instance(BOX_NAME, project)
         except gcloud.GcloudError as exc:
             _echo(f"Could not query GCP ({exc}); retrying...", color=typer.colors.YELLOW)
-            sleep(backoff)
-            backoff = min(backoff * 2, _BACKOFF_CAP)
+            sleep_time = 10 if first_run_done else backoff
+            sleep(sleep_time)
+            if not first_run_done:
+                backoff = min(backoff * 2, _BACKOFF_CAP)
             continue
 
         action, zone = _next_action(existing)
@@ -315,18 +319,21 @@ def keep_alive(
             _apply_quota_health(cfg, all_zones, project)
             _echo("No GPU box found - trying to secure one where quota exists...")
             try:
-                zone, _created = _create_box(project, load_state(), cfg)
+                zone, _created = _create_box(project, load_state(), cfg, no_quota=no_quota)
+                # Success! Reset search state
+                backoff = _BACKOFF_START
+                first_run_done = False
+                no_quota.clear()
             except gcloud.GcloudError as exc:
+                first_run_done = True
                 # Print the exact gcloud text (setup remediation, per-kind errors, quota
                 # steps) verbatim rather than a vague "no GPU" so the real cause is visible.
                 for line in str(exc).splitlines():
                     _echo(line, color=typer.colors.YELLOW)
                 _echo("Will keep trying...", color=typer.colors.CYAN)
-                sleep(backoff)
-                backoff = min(backoff * 2, _BACKOFF_CAP)
+                sleep(10)
                 continue
             _echo(f"Secured a GPU box in {zone}.", color=typer.colors.GREEN)
-            backoff = _BACKOFF_START
             ready = False
 
         elif action == "start":
@@ -356,6 +363,8 @@ def keep_alive(
                     _ensure_evo(BOX_NAME, zone, cfg, project)
                 ready = True
                 backoff = _BACKOFF_START
+                first_run_done = False
+                no_quota.clear()
                 _echo(f"GPU is UP and healthy in {zone}. First run will be fast.",
                       color=typer.colors.GREEN)
             except gcloud.GcloudError as exc:

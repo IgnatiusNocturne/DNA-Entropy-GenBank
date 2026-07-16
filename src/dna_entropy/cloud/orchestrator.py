@@ -254,7 +254,8 @@ def _attempt_create(zone: str, machine: str, accel: str, project: str, cfg: Clou
 
 def _try_sequential(zones: list[str], machine: str, accel: str, label: str,
                     project: str, cfg: CloudConfig,
-                    errors: dict[str, str]) -> tuple[Optional[str], bool, bool]:
+                    errors: dict[str, str],
+                    no_quota: Optional[set[tuple[str, str]]] = None) -> tuple[Optional[str], bool, bool]:
     """Try zones one at a time.
 
     Returns (winning_zone, had_quota_error, was_pre_existing). Records one exact error
@@ -278,6 +279,8 @@ def _try_sequential(zones: list[str], machine: str, accel: str, label: str,
                 return zone, had_quota, True
             if kind == "quota":
                 had_quota = True
+                if no_quota is not None:
+                    no_quota.add((zone.rsplit("-", 1)[0], label))
                 typer.secho(f"      {zone}: no {label} quota in this region, continuing...", fg=typer.colors.YELLOW)
             else:
                 typer.secho(f"      {zone}: no {label} capacity, trying next...", fg=typer.colors.YELLOW)
@@ -286,7 +289,8 @@ def _try_sequential(zones: list[str], machine: str, accel: str, label: str,
 
 def _try_parallel(zones: list[str], machine: str, accel: str, label: str,
                   project: str, cfg: CloudConfig,
-                  errors: dict[str, str]) -> tuple[Optional[str], bool, bool]:
+                  errors: dict[str, str],
+                  no_quota: Optional[set[tuple[str, str]]] = None) -> tuple[Optional[str], bool, bool]:
     """Try zones simultaneously; return (first_winner, had_quota_error, was_pre_existing).
 
     Cleans up any extra VMs that also succeeded. Records one exact error per kind into
@@ -315,6 +319,8 @@ def _try_parallel(zones: list[str], machine: str, accel: str, label: str,
                 errors[kind] = raw
                 if kind == "quota":
                     had_quota[0] = True
+                    if no_quota is not None:
+                        no_quota.add((zone.rsplit("-", 1)[0], label))
             if kind == "already_exists":
                 with lock:
                     if winner[0] is None:
@@ -348,7 +354,7 @@ def _try_parallel(zones: list[str], machine: str, accel: str, label: str,
     return winner[0], had_quota[0], pre_existing[0]
 
 
-def _create_box(project: str, state: dict, cfg: CloudConfig) -> tuple[str, bool]:
+def _create_box(project: str, state: dict, cfg: CloudConfig, no_quota: Optional[set[tuple[str, str]]] = None) -> tuple[str, bool]:
     """Create BOX_NAME across zones with escalating parallelism.
 
     Returns (zone, created) where created=False means a pre-existing VM was found.
@@ -359,6 +365,10 @@ def _create_box(project: str, state: dict, cfg: CloudConfig) -> tuple[str, bool]
     errors: dict[str, str] = {}  # one exact gcloud error per kind, for diagnostics
     for machine, accel, label in cfg.offers:
         zones = _ordered_zones(cfg, state)
+        if no_quota:
+            zones = [z for z in zones if (z.rsplit("-", 1)[0], label) not in no_quota]
+        if not zones:
+            continue
         any_quota = False
 
         def _win(zone: str, created: bool) -> tuple[str, bool]:
@@ -368,7 +378,7 @@ def _create_box(project: str, state: dict, cfg: CloudConfig) -> tuple[str, bool]
 
         # Phase 1: first 3 sequential (fast feedback, common case)
         seq, zones = zones[:3], zones[3:]
-        won, q, existing = _try_sequential(seq, machine, accel, label, project, cfg, errors)
+        won, q, existing = _try_sequential(seq, machine, accel, label, project, cfg, errors, no_quota=no_quota)
         any_quota = any_quota or q
         if won:
             return _win(won, not existing)
@@ -377,7 +387,7 @@ def _create_box(project: str, state: dict, cfg: CloudConfig) -> tuple[str, bool]
         if zones:
             batch, zones = zones[:3], zones[3:]
             typer.secho("  Sequential attempts exhausted; switching to parallel...", fg=typer.colors.YELLOW)
-            won, q, existing = _try_parallel(batch, machine, accel, label, project, cfg, errors)
+            won, q, existing = _try_parallel(batch, machine, accel, label, project, cfg, errors, no_quota=no_quota)
             any_quota = any_quota or q
             if won:
                 return _win(won, not existing)
@@ -386,7 +396,7 @@ def _create_box(project: str, state: dict, cfg: CloudConfig) -> tuple[str, bool]
         # Phase 3: next 5 parallel
         if zones:
             batch, zones = zones[:5], zones[5:]
-            won, q, existing = _try_parallel(batch, machine, accel, label, project, cfg, errors)
+            won, q, existing = _try_parallel(batch, machine, accel, label, project, cfg, errors, no_quota=no_quota)
             any_quota = any_quota or q
             if won:
                 return _win(won, not existing)
@@ -395,7 +405,7 @@ def _create_box(project: str, state: dict, cfg: CloudConfig) -> tuple[str, bool]
         # Phase 4+: batches of 7 until all zones are tried
         while zones:
             batch, zones = zones[:7], zones[7:]
-            won, q, existing = _try_parallel(batch, machine, accel, label, project, cfg, errors)
+            won, q, existing = _try_parallel(batch, machine, accel, label, project, cfg, errors, no_quota=no_quota)
             any_quota = any_quota or q
             if won:
                 return _win(won, not existing)

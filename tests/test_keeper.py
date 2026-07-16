@@ -231,7 +231,7 @@ def test_acquires_then_installs_once(monkeypatch: pytest.MonkeyPatch, patched) -
     states = [None, ("us-central1-a", "RUNNING"), ("us-central1-a", "RUNNING")]
     monkeypatch.setattr(gcloud, "find_instance", lambda *a, **k: states.pop(0))
 
-    def _create_box(project, state, cfg):
+    def _create_box(*args, **kwargs):
         calls["create"] += 1
         return "us-central1-a", True
 
@@ -249,18 +249,18 @@ def test_retries_forever_when_no_gpu(monkeypatch: pytest.MonkeyPatch, patched) -
     calls = patched
     monkeypatch.setattr(gcloud, "find_instance", lambda *a, **k: None)
 
-    def _create_box(project, state, cfg):
+    def _create_box(*args, **kwargs):
         calls["create"] += 1
         raise gcloud.GcloudError("no capacity in any zone")
 
     monkeypatch.setattr(keeper, "_create_box", _create_box)
 
-    # Must not raise even though every acquire fails; it just keeps trying + backs off.
+    # Must not raise even though every acquire fails; it just keeps trying every 10s.
     keep_alive(CloudConfig(), max_cycles=3, sleep=_recording_sleep(calls))
 
     assert calls["create"] == 3
     assert len(calls["sleeps"]) == 3
-    assert calls["sleeps"][0] < calls["sleeps"][-1]  # backoff grows
+    assert all(s == 10 for s in calls["sleeps"])
 
 
 def test_starts_a_stopped_box(monkeypatch: pytest.MonkeyPatch, patched) -> None:
