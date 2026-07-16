@@ -42,14 +42,16 @@ The output set depends on what you feed in:
 
 | Input | What we do | Files produced |
 |-------|-----------|----------------|
-| **GenBank** (`.gb`/`.gbk`) | Use the genes **already in the file** (never re-annotated); compute entropy. **Multi-record files are fully supported** — every record is analyzed | `<name>.gb` (all records, genes + per-gene `/note="mean_entropy=..."`), `<name>.entropy.wig` (one block per record), `stats.txt` |
-| **FASTA** (`.fa`/`.fasta`) or **pasted sequence** | Compute entropy; call genes with Prodigal when possible | `<name>.fasta`, `<name>.entropy.bedgraph`, `<name>.summary.txt`, `<name>.genes.gff3` *(with `--genes`)*, plus a bonus `<name>.gb` |
+| **GenBank** (`.gb`/`.gbk`) | Use the genes **already in the file** (never re-annotated); compute entropy. **Multi-record files are fully supported** — every record is analyzed | `<name>.gb` (all records, genes + per-gene `/note="mean_entropy=..."`), `<name>.entropy.wig` (one block per record), `<name>.entropy.geneious.gff3` (per-position track for Geneious), `stats.txt` |
+| **FASTA** (`.fa`/`.fasta`) or **pasted sequence** | Compute entropy; call genes with Prodigal when possible | `<name>.fasta`, `<name>.entropy.bedgraph`, `<name>.entropy.geneious.gff3`, `<name>.summary.txt`, `<name>.genes.gff3` *(with `--genes`)*, plus a bonus `<name>.gb` |
 
-Why two entropy-track formats? A GenBank file has **no channel for a per-base numeric
-graph**, so the full-resolution entropy graph is always a companion **WIG/bedGraph** track
-(for IGV/UCSC/JBrowse), while the GenBank carries a **coarse per-gene mean** as a note (so
-it shows in SnapGene/Benchling/Geneious). Between them, whatever tool you open, you see
-something meaningful.
+Why several entropy-track formats? A GenBank file has **no channel for a per-base numeric
+graph**, so the full-resolution entropy graph always ships as a companion track: **WIG /
+bedGraph** for IGV/UCSC/JBrowse, and **GFF3** (`<name>.entropy.geneious.gff3`) for
+**Geneious Prime**, which imports GFF3 but *not* WIG/bedGraph as graphs. The GenBank
+itself carries only a **coarse per-gene mean** as a note (so it shows in
+SnapGene/Benchling/Geneious). Between them, whatever tool you open, you see something
+meaningful.
 
 ## Architecture
 
@@ -170,8 +172,22 @@ The real Evo predictor (`--predictor evo`) needs an NVIDIA GPU with ~24 GB VRAM 
 2. *File → Load from File…* → `<name>.entropy.bedgraph` / `.wig` (and `.genes.gff3`).
 3. The entropy track renders as a graph aligned to the locus.
 
-**In SnapGene / Benchling / Geneious**: open `<name>.gb` — genes carry a
-`mean_entropy=… bits` note.
+**In Geneious Prime** (full per-base entropy track):
+1. Import the sequence: *File → Import → From File…* → `<name>.gb` (or `<name>.fasta`).
+2. Import the track onto it: *File → Import → From File…* → `<name>.entropy.geneious.gff3`.
+   When Geneious asks, import the annotations **onto the existing `<name>` sequence** (not
+   as a new document) so the coordinates line up. The entropy lands as an `entropy`
+   annotation track.
+3. Shade it by value: right-click the track (or use the track's popup menu) → *Color by /
+   Heatmap* → choose the **`entropy`** qualifier (or **score**). Each position is now
+   colored by its Shannon entropy (0–2 bits).
+
+Why not `.wig`/`.bedgraph` in Geneious? Geneious Prime imports GFF3 but treats WIG/bedGraph
+as *export-only* graph formats — it won't load them as tracks. The
+`<name>.entropy.geneious.gff3` file is the Geneious-native equivalent.
+
+**In SnapGene / Benchling / Geneious (coarse per-gene view)**: open `<name>.gb` — genes
+carry a `mean_entropy=… bits` note.
 
 ## Testing
 
@@ -196,7 +212,7 @@ src/dna_entropy/
 ├── predictors/                # base (L,4) contract · mock · evo · logits
 ├── analysis/                  # Shannon entropy + summary stats
 ├── annotators/                # Prodigal gene calling (optional)
-├── writers/                   # genbank · wig · bedgraph · fasta · gff · summary
+├── writers/                   # genbank · wig · bedgraph · geneious · fasta · gff · summary
 └── cloud/                     # gcloud wrappers · orchestrator · keeper
 tests/                         # mirrors src/, plus data/ fixtures
 ```

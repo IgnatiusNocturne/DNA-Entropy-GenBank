@@ -25,6 +25,7 @@ from .writers.base import Writer
 from .writers.bedgraph import BedGraphWriter
 from .writers.fasta import FastaWriter
 from .writers.genbank import GenBankWriter
+from .writers.geneious import GeneiousWriter
 from .writers.gff import GffWriter
 from .writers.summary import SummaryWriter
 from .writers.wig import WigWriter
@@ -114,6 +115,12 @@ def _write_genbank_outputs(cfg: RunConfig, processed: list[tuple]) -> list[str]:
         start=cfg.start,
         out_dir=cfg.out_dir,
     )
+    geneious = GeneiousWriter().write_multi(
+        name=cfg.name,
+        blocks=[(c.name, values) for c, values in processed],
+        start=cfg.start,
+        out_dir=cfg.out_dir,
+    )
     stats = SummaryWriter().write_multi(
         name=cfg.name,
         sections=[(c.name, values) for c, values in processed],
@@ -121,14 +128,19 @@ def _write_genbank_outputs(cfg: RunConfig, processed: list[tuple]) -> list[str]:
         out_dir=cfg.out_dir,
         filename="stats.txt",
     )
-    return [gb, wig, stats]
+    return [gb, wig, geneious, stats]
 
 
 def _write_standard_outputs(
     cfg: RunConfig, values: np.ndarray, seq: str
 ) -> tuple[list[str], list[GeneFeature]]:
     """FASTA/paste input -> the existing files, plus a bonus GenBank when possible."""
-    writers: list[Writer] = [FastaWriter(), _select_track_writer(cfg), SummaryWriter()]
+    writers: list[Writer] = [
+        FastaWriter(),
+        _select_track_writer(cfg),
+        GeneiousWriter(),
+        SummaryWriter(),
+    ]
     outputs = [
         w.write(name=cfg.name, values=values, seq=seq, start=cfg.start, out_dir=cfg.out_dir)
         for w in writers

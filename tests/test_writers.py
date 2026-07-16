@@ -1,4 +1,4 @@
-"""Tests for the IGV output writers (bedGraph, WIG, FASTA, summary)."""
+"""Tests for the IGV/Geneious output writers (bedGraph, WIG, GFF3, FASTA, summary)."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ import numpy as np
 from dna_entropy.writers import (
     BedGraphWriter,
     FastaWriter,
+    GeneiousWriter,
     SummaryWriter,
     WigWriter,
     Writer,
@@ -19,7 +20,7 @@ SEQ = "ATG"
 
 
 def test_writers_satisfy_protocol() -> None:
-    for w in (BedGraphWriter(), WigWriter(), FastaWriter(), SummaryWriter()):
+    for w in (BedGraphWriter(), WigWriter(), GeneiousWriter(), FastaWriter(), SummaryWriter()):
         assert isinstance(w, Writer)
 
 
@@ -51,6 +52,33 @@ def test_wig_header_and_values(tmp_path: Path) -> None:
     assert lines[0].startswith("track type=wiggle_0")
     assert lines[1] == "fixedStep chrom=locus start=1 step=1 span=1"
     assert lines[2:] == ["0.0000", "1.0000", "2.0000"]
+
+
+def test_geneious_gff3_track(tmp_path: Path) -> None:
+    path = GeneiousWriter().write(
+        name="locus", values=VALUES, seq=SEQ, start=1, out_dir=str(tmp_path)
+    )
+    assert path.endswith("locus.entropy.geneious.gff3")
+    lines = Path(path).read_text(encoding="utf-8").splitlines()
+    assert lines[0] == "##gff-version 3"
+    assert lines[1] == "##sequence-region locus 1 3"
+    # one 1 bp feature per position; entropy in the score column (6) and an entropy qualifier
+    first = lines[2].split("\t")
+    assert first[0] == "locus"
+    assert first[2] == "entropy"
+    assert first[3] == "1" and first[4] == "1"  # 1-based, inclusive
+    assert first[5] == "0.0000"  # score column
+    assert "entropy=0.0000" in first[8]
+    assert lines[4].split("\t")[5] == "2.0000"
+
+
+def test_geneious_gff3_respects_start_offset(tmp_path: Path) -> None:
+    path = GeneiousWriter().write(
+        name="locus", values=VALUES, seq=SEQ, start=100, out_dir=str(tmp_path)
+    )
+    lines = Path(path).read_text(encoding="utf-8").splitlines()
+    assert lines[1] == "##sequence-region locus 100 102"
+    assert lines[2].split("\t")[3] == "100"
 
 
 def test_fasta_roundtrip_and_wrapping(tmp_path: Path) -> None:

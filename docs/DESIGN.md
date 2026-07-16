@@ -51,7 +51,7 @@ DNA-Entropy/
 │   ├── predictors/                # base.py (Predictor + (L,4) contract), mock.py, evo.py
 │   ├── analysis/                  # entropy.py
 │   ├── annotators/                # base.py (Annotator), prodigal.py  (optional)
-│   ├── writers/                   # base.py (Writer), bedgraph.py, wig.py, fasta.py, gff.py, genbank.py
+│   ├── writers/                   # base.py (Writer), bedgraph.py, wig.py, geneious.py, fasta.py, gff.py, genbank.py
 │   └── cloud/                     # gcloud.py, orchestrator.py, keeper.py, ui.py
 ├── keep_gpu.py                    # standalone always-on GPU keeper
 └── tests/                         # mirrors src/, plus data/ and conftest.py
@@ -180,14 +180,19 @@ strict A/C/G/T.
 depends on the input kind:
 
 - **GenBank input** → `<name>.gb` (its **existing** genes, each with a
-  `/note="mean_entropy=… bits"`), `<name>.entropy.wig` (full-res graph), `stats.txt`.
+  `/note="mean_entropy=… bits"`), `<name>.entropy.wig` (full-res graph),
+  `<name>.entropy.geneious.gff3` (full-res track for Geneious), `stats.txt`.
   Prodigal is **not** run — the input's gene annotations are authoritative.
 - **FASTA / pasted input** → `<name>.fasta`, `<name>.entropy.bedgraph|wig`,
-  `<name>.summary.txt`, `<name>.genes.gff3` (if `--genes`), plus a bonus `<name>.gb`
-  (genes from Prodigal when available, else sequence + entropy only).
+  `<name>.entropy.geneious.gff3`, `<name>.summary.txt`, `<name>.genes.gff3` (if `--genes`),
+  plus a bonus `<name>.gb` (genes from Prodigal when available, else sequence + entropy only).
 
 GenBank has no per-base numeric channel, so the full-resolution entropy graph is always a
-companion WIG/bedGraph track; the GenBank carries only the coarse per-gene mean.
+companion track. IGV/UCSC/JBrowse read the WIG/bedGraph; **Geneious Prime imports GFF3 but
+not WIG/bedGraph as graphs**, so the same per-position entropy is also emitted as
+`<name>.entropy.geneious.gff3` (one 1 bp feature per position, entropy in the score column
+and an `entropy` qualifier; shade it with Geneious's *Color by / Heatmap*). The GenBank
+carries only the coarse per-gene mean.
 
 ## 7. IGV output
 

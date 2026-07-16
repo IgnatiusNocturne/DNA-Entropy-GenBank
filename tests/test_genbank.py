@@ -123,9 +123,11 @@ def test_pipeline_genbank_input(tmp_path: Path) -> None:
     cfg = RunConfig(name="tl", input_path=SAMPLE_GB, out_dir=str(tmp_path))
     result = pipeline.run(cfg)
     names = {Path(p).name for p in result.outputs}
-    assert names == {"tl.gb", "tl.entropy.wig", "stats.txt"}
-    # No FASTA / bedGraph / GFF on the GenBank path.
-    assert not any(n.endswith((".fasta", ".bedgraph", ".gff3")) for n in names)
+    assert names == {"tl.gb", "tl.entropy.wig", "tl.entropy.geneious.gff3", "stats.txt"}
+    # No FASTA / bedGraph, and no genes GFF, on the GenBank path (the only .gff3 is the
+    # Geneious entropy track).
+    assert not any(n.endswith((".fasta", ".bedgraph")) for n in names)
+    assert not any(n.endswith(".genes.gff3") for n in names)
     assert len(result.genes) == 2  # preserved from the input, not re-called
 
 
@@ -169,7 +171,7 @@ def test_pipeline_multi_record_genbank(tmp_path: Path) -> None:
     cfg = RunConfig(name="mt", input_path=MULTI_GB, out_dir=str(tmp_path))
     result = pipeline.run(cfg)
     names = {Path(p).name for p in result.outputs}
-    assert names == {"mt.gb", "mt.entropy.wig", "stats.txt"}  # still just the 3 files
+    assert names == {"mt.gb", "mt.entropy.wig", "mt.entropy.geneious.gff3", "stats.txt"}
     assert result.contigs == 2
     assert len(result.genes) == 3  # 2 + 1 genes preserved across both records
 

@@ -26,7 +26,13 @@ def test_run_writes_all_outputs(tmp_path: Path) -> None:
     assert result.values.max() <= MAX_ENTROPY_BITS + 1e-6
 
     # Paste/FASTA input yields the IGV set plus a bonus self-contained GenBank.
-    expected = {"demo.fasta", "demo.entropy.bedgraph", "demo.summary.txt", "demo.gb"}
+    expected = {
+        "demo.fasta",
+        "demo.entropy.bedgraph",
+        "demo.entropy.geneious.gff3",
+        "demo.summary.txt",
+        "demo.gb",
+    }
     written = {Path(p).name for p in result.outputs}
     assert expected == written
     for p in result.outputs:
