@@ -140,7 +140,20 @@ def _write_genbank_outputs(cfg: RunConfig, processed: list[tuple]) -> list[str]:
         out_dir=cfg.out_dir,
         filename="stats.txt",
     )
-    return [gb, fasta, bedgraph, wig, geneious, stats]
+    outputs = [gb, fasta, bedgraph, wig, geneious, stats]
+
+    # Gene track for IGV, straight from the GenBank's own genes (never Prodigal). Only
+    # written when the records actually carry genes.
+    if any(c.features for c, _ in processed):
+        genes_gff = GffWriter().write_multi(
+            name=cfg.name,
+            blocks=[(c.name, c.features, len(c.seq)) for c, _ in processed],
+            start=cfg.start,
+            out_dir=cfg.out_dir,
+            source="genbank",
+        )
+        outputs.append(genes_gff)
+    return outputs
 
 
 def _write_standard_outputs(

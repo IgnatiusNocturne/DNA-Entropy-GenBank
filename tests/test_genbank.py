@@ -129,12 +129,15 @@ def test_pipeline_genbank_input(tmp_path: Path) -> None:
         "tl.entropy.bedgraph",
         "tl.entropy.wig",
         "tl.entropy.geneious.gff3",
+        "tl.genes.gff3",
         "stats.txt",
     }
-    # Prodigal never runs on the GenBank path, so there is no genes GFF (the only .gff3 is
-    # the Geneious entropy track); the FASTA/bedGraph come from the record, not Prodigal.
-    assert not any(n.endswith(".genes.gff3") for n in names)
     assert len(result.genes) == 2  # preserved from the input, not re-called
+
+    # The genes track comes from the GenBank (source column "genbank"), not Prodigal.
+    genes_gff = Path(next(p for p in result.outputs if p.endswith(".genes.gff3"))).read_text()
+    assert "\tgenbank\tgene\t" in genes_gff
+    assert "\tpyrodigal\t" not in genes_gff
 
 
 def test_pipeline_fasta_input_adds_genbank(tmp_path: Path) -> None:
@@ -183,6 +186,7 @@ def test_pipeline_multi_record_genbank(tmp_path: Path) -> None:
         "mt.entropy.bedgraph",
         "mt.entropy.wig",
         "mt.entropy.geneious.gff3",
+        "mt.genes.gff3",
         "stats.txt",
     }
     assert result.contigs == 2
@@ -207,6 +211,10 @@ def test_pipeline_multi_record_genbank(tmp_path: Path) -> None:
     bg_text = Path(next(p for p in result.outputs if p.endswith(".bedgraph"))).read_text()
     assert bg_text.count("track type=bedGraph") == 1  # single header covers both records
     assert "mt_1\t" in bg_text and "mt_2\t" in bg_text
+
+    # The genes track (from the GenBank) places each record's genes on its own contig.
+    genes_gff = Path(next(p for p in result.outputs if p.endswith(".genes.gff3"))).read_text()
+    assert "mt_1\tgenbank\tgene\t" in genes_gff and "mt_2\tgenbank\tgene\t" in genes_gff
 
     # stats.txt reports each record.
     stats = Path(next(p for p in result.outputs if p.endswith("stats.txt"))).read_text()

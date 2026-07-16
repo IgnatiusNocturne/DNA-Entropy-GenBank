@@ -182,9 +182,10 @@ depends on the input kind:
 - **GenBank input** → `<name>.gb` (its **existing** genes, each with a
   `/note="mean_entropy=… bits"`), `<name>.fasta` (all records, for loading as an IGV
   genome), `<name>.entropy.bedgraph` + `<name>.entropy.wig` (full-res graph, a block per
-  record), `<name>.entropy.geneious.gff3` (full-res track for Geneious), `stats.txt`.
-  Prodigal is **not** run — the sequence and gene annotations come straight from the input
-  records, which are authoritative.
+  record), `<name>.entropy.geneious.gff3` (full-res track for Geneious), `<name>.genes.gff3`
+  (the records' own genes as an IGV feature track, `source=genbank`; written only when the
+  file carries genes), `stats.txt`. Prodigal is **not** run — the sequence and gene
+  annotations come straight from the input records, which are authoritative.
 - **FASTA / pasted input** → `<name>.fasta`, `<name>.entropy.bedgraph|wig`,
   `<name>.entropy.geneious.gff3`, `<name>.summary.txt`, `<name>.genes.gff3` (if `--genes`),
   plus a bonus `<name>.gb` (genes from Prodigal when available, else sequence + entropy only).
